@@ -74,7 +74,9 @@ func NewFramework(r Registry, opts ...Option) (framework.Framework, error) {
 	estimateReplicasPluginsList := reflect.ValueOf(&f.estimateReplicasPlugins).Elem()
 	estimateReplicasType := estimateReplicasPluginsList.Type().Elem()
 
+	fmt.Println("YaoTest1 framework.go line 77")
 	for name, factory := range r {
+		fmt.Println(fmt.Sprintf("YaoTest1 framework.go line 79 %s", name))
 		p, err := factory(f)
 		if err != nil {
 			return nil, fmt.Errorf("failed to initialize plugin %q: %w", name, err)

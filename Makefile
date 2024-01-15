@@ -8,17 +8,18 @@ REGISTRY_USER_NAME?=""
 REGISTRY_PASSWORD?=""
 REGISTRY_SERVER_ADDRESS?=""
 
-TARGETS := karmada-aggregated-apiserver \
-			karmada-controller-manager \
-			karmada-scheduler \
-			karmada-descheduler \
-			karmada-webhook \
-			karmada-agent \
-			karmada-scheduler-estimator \
-			karmada-interpreter-webhook-example \
-			karmada-search \
-			karmada-operator \
-			karmada-metrics-adapter
+#TARGETS := karmada-aggregated-apiserver \
+#			karmada-controller-manager \
+#			karmada-scheduler \
+#			karmada-descheduler \
+#			karmada-webhook \
+#			karmada-agent \
+#			karmada-scheduler-estimator \
+#			karmada-interpreter-webhook-example \
+#			karmada-search \
+#			karmada-operator \
+#			karmada-metrics-adapter
+TARGETS := karmada-scheduler-estimator
 
 CTL_TARGETS := karmadactl kubectl-karmada
 

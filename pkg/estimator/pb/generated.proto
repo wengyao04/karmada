@@ -95,6 +95,20 @@ message ReplicaRequirements {
   // ResourceRequest represents the resources required by each replica.
   // +optional
   map<string, k8s.io.apimachinery.pkg.api.resource.Quantity> resourceRequest = 2;
+
+  // +required represents the namespaces belonged to a ResourceRequest
+  optional string namespace = 3;
+
+  // +optional PriorityClassName represents the priority class name associated with a given ResourceRequest
+  // We introduce PriorityClassName in ReplicaRequirements for two main reasons,
+  // 1) To account for resource quota during replica estimation.
+  // 2) TODO (wengyao04) To enable preemption based on priority class.
+  // Why do we need to consider resource quote when estimating replica ?
+  // Resource quota is introduced to manage multiple tenants sharing a cluster.
+  // In addition to estimating replicas based on nodes' resources,
+  // it is essential to take into account the resource quota which limits aggregate resource consumption per namespace.
+  // ResourceQuota includes a set of associated scopes, with priority class being one of them.
+  optional string priorityClassName = 4;
 }
 
 // UnschedulableReplicasRequest represents the request that sent by gRPC client to calculate unschedulable replicas.
