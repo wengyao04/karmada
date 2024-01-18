@@ -18,6 +18,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"sync/atomic"
 	"time"
 
@@ -87,6 +88,8 @@ func (es *AccurateSchedulerEstimatorServer) estimateReplicas(
 		atomic.AddInt32(&res, maxReplica)
 	}
 	es.parallelizer.Until(ctx, len(allNodes), processNode)
+
+	fmt.Println(fmt.Sprintf("YaoTest estimate.go line 92 plugin estimate is %d, node estimate is %d", replicas, res))
 
 	if replicas < res {
 		res = replicas

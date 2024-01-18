@@ -17,9 +17,10 @@ limitations under the License.
 package options
 
 import (
+	"github.com/spf13/pflag"
+
 	"github.com/karmada-io/karmada/pkg/features"
 	"github.com/karmada-io/karmada/pkg/sharedcli/profileflag"
-	"github.com/spf13/pflag"
 )
 
 const (

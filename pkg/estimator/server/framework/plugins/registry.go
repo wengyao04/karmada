@@ -23,7 +23,6 @@ import (
 
 // NewInTreeRegistry builds the registry with all the in-tree plugins.
 func NewInTreeRegistry() runtime.Registry {
-
 	registry := runtime.Registry{
 		resourcequota.Name: resourcequota.New,
 	}

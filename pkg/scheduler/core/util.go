@@ -67,7 +67,6 @@ func calAvailableReplicas(clusters []*clusterv1alpha1.Cluster, spec *workv1alpha
 			spec.Resource.Kind, names.NamespacedKey(spec.Resource.Namespace, spec.Resource.Name))
 		return availableTargetClusters
 	}
-
 	// Get the minimum value of MaxAvailableReplicas in terms of all estimators.
 	estimators := estimatorclient.GetReplicaEstimators()
 	ctx := context.WithValue(context.TODO(), util.ContextKeyObject,

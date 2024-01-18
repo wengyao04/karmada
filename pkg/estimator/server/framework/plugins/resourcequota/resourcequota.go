@@ -53,7 +53,6 @@ var _ framework.EstimateReplicasPlugin = &resourceQuotaEstimator{}
 // New initializes a new plugin and returns it.
 func New(fh framework.Handle) (framework.Plugin, error) {
 	enabled := features.FeatureGate.Enabled(features.ResourceQuotaEstimate)
-	fmt.Println(fmt.Sprintf("YaoTest1 line 56 enable %t", enabled))
 	if !enabled {
 		// Disabled, won't do anything.
 		return &resourceQuotaEstimator{}, nil
@@ -78,32 +77,36 @@ func (pl *resourceQuotaEstimator) Estimate(ctx context.Context, replicaRequireme
 	}
 	namespace := replicaRequirements.Namespace
 	priorityClassName := replicaRequirements.PriorityClassName
-	fmt.Printf(fmt.Sprintf("YaoTest1 line 80 namespace is %s priorityClass is %s \n", namespace, priorityClassName))
+	// fmt.Println(fmt.Sprintf("YaoTest1 resourcequota.go line 80 namespace is %s priorityClass is %s", namespace, priorityClassName))
 
 	rqList, err := pl.rqLister.ResourceQuotas(namespace).List(labels.Everything())
 	if err != nil {
 		logger.Error(err, "fail to list resource quota", "namespace", namespace)
 		return result, err
 	}
+	// fmt.Println(fmt.Sprintf("YaoTest1 resourcequota.go line 87 rqList len is %d", len(rqList)))
 	for _, rq := range rqList {
+		fmt.Println(fmt.Sprintf("YaoTest1 resourcequota.go line 89 rq is %v", rq))
 		rqEvaluator := newResourceQuotaEvaluator(ctx, rq, priorityClassName)
-		replicaCount := rqEvaluator.Evaluate(replicaRequirements)
+		replicaCount := rqEvaluator.evaluate(replicaRequirements)
 		if replicaCount < result {
 			result = replicaCount
 		}
 	}
-	fmt.Printf(fmt.Sprintf("YaoTest1 line 94 replicaCount is %d \n", result))
+	fmt.Println(fmt.Sprintf("YaoTest1 resourcequota.go line 96 replicaCount is %d", result))
 	return result, nil
 }
 
 type resourceQuotaEvaluator struct {
-	resourceRequest []*util.Resource
+	//key (string) is the name of the resource quota
+	//value (ResourceList) is the free resources calculated by (hard - used) from the resource quota status
+	resourceRequest map[string]corev1.ResourceList
 }
 
 func newResourceQuotaEvaluator(ctx context.Context, rq *corev1.ResourceQuota, priorityClassName string) *resourceQuotaEvaluator {
 	logger := klog.FromContext(ctx)
 	selectors := getScopeSelectorsFromQuota(rq)
-	var resources []*util.Resource
+	resources := make(map[string]corev1.ResourceList)
 
 	for _, selector := range selectors {
 		matchScope, err := matchesScope(selector, priorityClassName)
@@ -115,26 +118,43 @@ func newResourceQuotaEvaluator(ctx context.Context, rq *corev1.ResourceQuota, pr
 			continue
 		}
 		matchResource := matchingResources(resourceNames(rq.Status.Hard))
-		resource := convert(rq, matchResource)
-		resources = append(resources, resource)
+		if len(matchResource) != 0 {
+			resource := calculateFreeResources(rq, matchResource)
+			resources[rq.Name] = resource
+		}
 	}
 	return &resourceQuotaEvaluator{
 		resourceRequest: resources,
 	}
 }
 
-func (e *resourceQuotaEvaluator) Evaluate(replicaRequirements *pb.ReplicaRequirements) int32 {
+func (e *resourceQuotaEvaluator) evaluate(replicaRequirements *pb.ReplicaRequirements) int32 {
 	var result int32 = math.MaxInt32
-	for _, resource := range e.resourceRequest {
-		allowed := int32(resource.MaxDivided(replicaRequirements.ResourceRequest))
-		if allowed < result {
-			result = allowed
+	for _, resourceList := range e.resourceRequest {
+		filteredRequiredResourceList := corev1.ResourceList{}
+		for resourceName, request := range replicaRequirements.ResourceRequest {
+			if _, ok := resourceList[resourceName]; ok {
+				filteredRequiredResourceList[resourceName] = request
+			}
+		}
+		resource := util.NewResource(resourceList)
+		resource.AllowedPodNumber = math.MaxInt64
+		allowed := resource.MaxDivided(filteredRequiredResourceList)
+		// continue the loop to avoid integer overflow
+		if allowed == math.MaxInt64 {
+			continue
+		}
+		replica := int32(allowed)
+		if replica < result {
+			result = replica
 		}
 	}
 	return result
 }
 
-func convert(rq *corev1.ResourceQuota, resourceNames []corev1.ResourceName) *util.Resource {
+// calculateFreeResources calculates the free resources from input resource quota
+// it only calculates the free resources that in resourceNames
+func calculateFreeResources(rq *corev1.ResourceQuota, resourceNames []corev1.ResourceName) corev1.ResourceList {
 	hardResourceList := corev1.ResourceList{}
 	usedResourceList := corev1.ResourceList{}
 	for _, resourceName := range resourceNames {
@@ -155,14 +175,15 @@ func convert(rq *corev1.ResourceQuota, resourceNames []corev1.ResourceName) *uti
 		hardResourceList[trimmedResourceName] = hardResource
 		usedResourceList[trimmedResourceName] = usedResource
 	}
-	hard := util.NewResource(hardResourceList)
-	used := util.NewResource(usedResourceList)
-	if hard == nil || used == nil {
-		return nil
+
+	freeResourceList := corev1.ResourceList{}
+	for resourceName, hard := range hardResourceList {
+		if used, ok := usedResourceList[resourceName]; ok {
+			hard.Sub(used)
+			freeResourceList[resourceName] = hard
+		}
 	}
-	resource := hard.SubResource(used)
-	resource.AllowedPodNumber = math.MaxInt64
-	return resource
+	return freeResourceList
 }
 
 // resourceNames returns a list of all resource names in the ResourceList
@@ -188,6 +209,7 @@ func getScopeSelectorsFromQuota(quota *corev1.ResourceQuota) []corev1.ScopedReso
 }
 
 // matchesScope is a function that knows how to evaluate if a pod matches a scope
+// we only support PriorityClass scope now.
 func matchesScope(selector corev1.ScopedResourceSelectorRequirement, priorityClassName string) (bool, error) {
 	switch selector.ScopeName {
 	case corev1.ResourceQuotaScopeTerminating:
@@ -255,27 +277,26 @@ func scopedResourceSelectorRequirementsAsSelector(ssr corev1.ScopedResourceSelec
 var computeResources = []corev1.ResourceName{
 	corev1.ResourceCPU,
 	corev1.ResourceMemory,
-	corev1.ResourceEphemeralStorage,
 	corev1.ResourceRequestsCPU,
 	corev1.ResourceRequestsMemory,
-	corev1.ResourceRequestsEphemeralStorage,
 	corev1.ResourceLimitsCPU,
 	corev1.ResourceLimitsMemory,
-	corev1.ResourceLimitsEphemeralStorage,
 }
 
 // matchingResources takes the input specified list of resources and returns the set of resources it matches.
 func matchingResources(input []corev1.ResourceName) []corev1.ResourceName {
 	result := intersection(input, computeResources)
+
 	for _, resource := range input {
-		// for extended resources
-		if strings.HasPrefix(string(resource), resourceRequestsPrefix) {
+		// add extended resources
+		if corev1helper.IsExtendedResourceName(resource) {
+			result = append(result, resource)
+		} else if strings.HasPrefix(string(resource), resourceRequestsPrefix) {
 			trimmedResourceName := corev1.ResourceName(strings.TrimPrefix(string(resource), resourceRequestsPrefix))
 			if corev1helper.IsExtendedResourceName(trimmedResourceName) {
 				result = append(result, resource)
 			}
-		}
-		if strings.HasPrefix(string(resource), resourceLimitsPrefix) {
+		} else if strings.HasPrefix(string(resource), resourceLimitsPrefix) {
 			trimmedResourceName := corev1.ResourceName(strings.TrimPrefix(string(resource), resourceLimitsPrefix))
 			if corev1helper.IsExtendedResourceName(trimmedResourceName) {
 				result = append(result, resource)
