@@ -19,6 +19,7 @@ package resourcequota
 import (
 	"context"
 	"fmt"
+	schedcache "github.com/karmada-io/karmada/pkg/util/lifted/scheduler/cache"
 	"math"
 	"sort"
 	"strings"
@@ -68,12 +69,14 @@ func (pl *resourceQuotaEstimator) Name() string {
 	return Name
 }
 
-func (pl *resourceQuotaEstimator) Estimate(ctx context.Context, replicaRequirements *pb.ReplicaRequirements) (int32, error) {
-	var result int32 = math.MaxInt32
+func (pl *resourceQuotaEstimator) Estimate(ctx context.Context,
+	snapshot *schedcache.Snapshot,
+	replicaRequirements *pb.ReplicaRequirements) (int32, *framework.Result) {
+	var replica int32 = math.MaxInt32
 	logger := klog.FromContext(ctx)
 	if !pl.enabled {
 		logger.V(5).Info("Estimator Plugin", "name", Name, "enabled", pl.enabled)
-		return result, nil
+		return replica, framework.NewResult(framework.Noopperation, fmt.Sprintf("%s is disabled", pl.Name()))
 	}
 	namespace := replicaRequirements.Namespace
 	priorityClassName := replicaRequirements.PriorityClassName
@@ -82,19 +85,30 @@ func (pl *resourceQuotaEstimator) Estimate(ctx context.Context, replicaRequireme
 	rqList, err := pl.rqLister.ResourceQuotas(namespace).List(labels.Everything())
 	if err != nil {
 		logger.Error(err, "fail to list resource quota", "namespace", namespace)
-		return result, err
+		return replica, framework.AsResult(err)
 	}
 	// fmt.Println(fmt.Sprintf("YaoTest1 resourcequota.go line 87 rqList len is %d", len(rqList)))
 	for _, rq := range rqList {
 		fmt.Println(fmt.Sprintf("YaoTest1 resourcequota.go line 89 rq is %v", rq))
 		rqEvaluator := newResourceQuotaEvaluator(ctx, rq, priorityClassName)
-		replicaCount := rqEvaluator.evaluate(replicaRequirements)
-		if replicaCount < result {
-			result = replicaCount
+		replicaFromRqEvaluator := rqEvaluator.evaluate(replicaRequirements)
+		if replicaFromRqEvaluator < replica {
+			replica = replicaFromRqEvaluator
 		}
 	}
-	fmt.Println(fmt.Sprintf("YaoTest1 resourcequota.go line 96 replicaCount is %d", result))
-	return result, nil
+	fmt.Println(fmt.Sprintf("YaoTest1 resourcequota.go line 96 replicaCount is %d", replica))
+
+	var result *framework.Result
+	if replica == math.MaxInt32 {
+		result = framework.NewResult(framework.Noopperation,
+			fmt.Sprintf("%s has no operation on input replicaRequirements", pl.Name()))
+	} else if replica == 0 {
+		result = framework.NewResult(framework.Unschedulable,
+			fmt.Sprintf("zero replica is estimated by %s", pl.Name()))
+	} else {
+		result = framework.NewResult(framework.Success)
+	}
+	return replica, result
 }
 
 type resourceQuotaEvaluator struct {

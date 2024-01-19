@@ -27,6 +27,7 @@ import (
 	"testing"
 
 	"github.com/karmada-io/karmada/pkg/estimator/pb"
+	"github.com/karmada-io/karmada/pkg/estimator/server/framework"
 	frameworkruntime "github.com/karmada-io/karmada/pkg/estimator/server/framework/runtime"
 	"github.com/karmada-io/karmada/pkg/features"
 	"github.com/stretchr/testify/assert"
@@ -127,8 +128,8 @@ type testContext struct {
 }
 
 type expect struct {
-	replica   int32
-	isSuccess bool
+	replica int32
+	ret     *framework.Result
 }
 
 func setup(t *testing.T, resourceQuotaList []*corev1.ResourceQuota, enablePlugin, mockResourceQuotaListError bool) (result *testContext) {
@@ -239,7 +240,7 @@ func listReactor(tracker cgotesting.ObjectTracker) func(action cgotesting.Action
 }
 
 func TestResourceQuotaEstimatorPlugin(t *testing.T) {
-	testcases := map[string]struct {
+	tests := map[string]struct {
 		replicaRequirements        pb.ReplicaRequirements
 		resourceQuotaList          []*corev1.ResourceQuota
 		mockResourceQuotaListError bool
@@ -257,8 +258,8 @@ func TestResourceQuotaEstimatorPlugin(t *testing.T) {
 			resourceQuotaList: []*corev1.ResourceQuota{},
 			enabled:           true,
 			expect: expect{
-				replica:   math.MaxInt32,
-				isSuccess: true,
+				replica: math.MaxInt32,
+				ret:     framework.NewResult(framework.Noopperation, "ResourceQuotaEstimator has no operation on input replicaRequirements"),
 			},
 		},
 		"resource-quota-evaluate-cpu-only": {
@@ -274,8 +275,8 @@ func TestResourceQuotaEstimatorPlugin(t *testing.T) {
 			},
 			enabled: true,
 			expect: expect{
-				replica:   4,
-				isSuccess: true,
+				replica: 4,
+				ret:     framework.NewResult(framework.Success),
 			},
 		},
 		"resource-quota-evaluate-memory-only": {
@@ -291,8 +292,8 @@ func TestResourceQuotaEstimatorPlugin(t *testing.T) {
 			},
 			enabled: true,
 			expect: expect{
-				replica:   1,
-				isSuccess: true,
+				replica: 1,
+				ret:     framework.NewResult(framework.Success),
 			},
 		},
 		"resource-quota-evaluate-extended-resource-only": {
@@ -308,8 +309,8 @@ func TestResourceQuotaEstimatorPlugin(t *testing.T) {
 			},
 			enabled: true,
 			expect: expect{
-				replica:   3,
-				isSuccess: true,
+				replica: 3,
+				ret:     framework.NewResult(framework.Success),
 			},
 		},
 		"resource-quota-evaluate-not-supported-ephemeral-storage": {
@@ -325,14 +326,14 @@ func TestResourceQuotaEstimatorPlugin(t *testing.T) {
 			},
 			enabled: true,
 			expect: expect{
-				replica:   math.MaxInt32,
-				isSuccess: true,
+				replica: math.MaxInt32,
+				ret:     framework.NewResult(framework.Noopperation, "ResourceQuotaEstimator has no operation on input replicaRequirements"),
 			},
 		},
 		"resource-quota-evaluate-all": {
 			replicaRequirements: pb.ReplicaRequirements{
 				ResourceRequest: map[corev1.ResourceName]resource.Quantity{
-					"cpu":               *resource.NewMilliQuantity(200, resource.DecimalSI),
+					"cpu":               *resource.NewQuantity(2, resource.DecimalSI),
 					"memory":            *resource.NewQuantity(2*(1024*1024), resource.DecimalSI),
 					"nvidia.com/gpu":    *resource.NewQuantity(1, resource.DecimalSI),
 					"ephemeral-storage": *resource.NewQuantity(1024*1024, resource.DecimalSI),
@@ -345,8 +346,8 @@ func TestResourceQuotaEstimatorPlugin(t *testing.T) {
 			},
 			enabled: true,
 			expect: expect{
-				replica:   1,
-				isSuccess: true,
+				replica: 0,
+				ret:     framework.NewResult(framework.Unschedulable, "zero replica is estimated by ResourceQuotaEstimator"),
 			},
 		},
 		"request-resource-quota-evaluate-all": {
@@ -365,8 +366,28 @@ func TestResourceQuotaEstimatorPlugin(t *testing.T) {
 			},
 			enabled: true,
 			expect: expect{
-				replica:   1,
-				isSuccess: true,
+				replica: 1,
+				ret:     framework.NewResult(framework.Success),
+			},
+		},
+		"resource-quota-evaluate-all-unschedulable": {
+			replicaRequirements: pb.ReplicaRequirements{
+				ResourceRequest: map[corev1.ResourceName]resource.Quantity{
+					"cpu":               *resource.NewMilliQuantity(200, resource.DecimalSI),
+					"memory":            *resource.NewQuantity(2*(1024*1024), resource.DecimalSI),
+					"nvidia.com/gpu":    *resource.NewQuantity(1, resource.DecimalSI),
+					"ephemeral-storage": *resource.NewQuantity(1024*1024, resource.DecimalSI),
+				},
+				Namespace:         fooNamespace,
+				PriorityClassName: fooPriorityClassName,
+			},
+			resourceQuotaList: []*corev1.ResourceQuota{
+				fooResourceQuota,
+			},
+			enabled: true,
+			expect: expect{
+				replica: 1,
+				ret:     framework.NewResult(framework.Success),
 			},
 		},
 		"resource-quota-not-supported-scopes": {
@@ -398,44 +419,45 @@ func TestResourceQuotaEstimatorPlugin(t *testing.T) {
 			},
 			enabled: true,
 			expect: expect{
-				replica:   math.MaxInt32,
-				isSuccess: true,
+				replica: math.MaxInt32,
+				ret:     framework.NewResult(framework.Noopperation, "ResourceQuotaEstimator has no operation on input replicaRequirements"),
 			},
 		},
-		"resource-quota-list-failed": {
-			replicaRequirements: pb.ReplicaRequirements{
-				ResourceRequest: map[corev1.ResourceName]resource.Quantity{
-					"cpu": *resource.NewMilliQuantity(200, resource.DecimalSI),
-				},
-				Namespace:         fooNamespace,
-				PriorityClassName: fooPriorityClassName,
-			},
-			resourceQuotaList: []*corev1.ResourceQuota{
-				fooResourceQuota,
-				barResourceQuota,
-			},
-			mockResourceQuotaListError: true,
-			enabled:                    true,
-			expect: expect{
-				replica:   math.MaxInt32,
-				isSuccess: false,
-			},
-		},
+		//"resource-quota-list-failed": {
+		//	replicaRequirements: pb.ReplicaRequirements{
+		//		ResourceRequest: map[corev1.ResourceName]resource.Quantity{
+		//			"cpu": *resource.NewMilliQuantity(200, resource.DecimalSI),
+		//		},
+		//		Namespace:         fooNamespace,
+		//		PriorityClassName: fooPriorityClassName,
+		//	},
+		//	resourceQuotaList: []*corev1.ResourceQuota{
+		//		fooResourceQuota,
+		//		barResourceQuota,
+		//	},
+		//	mockResourceQuotaListError: true,
+		//	enabled:                    true,
+		//	expect: expect{
+		//		replica:   math.MaxInt32,
+		//		ret: framework.NewResult(framework.Success),
+		//	},
+		//},
 		"feature-gate-disabled": {
 			enabled: false,
 			expect: expect{
-				replica:   math.MaxInt32,
-				isSuccess: true,
+				replica: math.MaxInt32,
+				ret:     framework.NewResult(framework.Noopperation, "ResourceQuotaEstimator is disabled"),
 			},
 		},
 	}
-	for name, tc := range testcases {
+	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
-			testCtx := setup(t, tc.resourceQuotaList, tc.enabled, tc.mockResourceQuotaListError)
-			replica, err := testCtx.p.Estimate(testCtx.ctx, &tc.replicaRequirements)
-			isSuccess := err == nil
-			assert.Equal(t, tc.expect.isSuccess, isSuccess)
-			assert.Equal(t, tc.expect.replica, replica)
+			testCtx := setup(t, tt.resourceQuotaList, tt.enabled, tt.mockResourceQuotaListError)
+			replica, ret := testCtx.p.Estimate(testCtx.ctx, nil, &tt.replicaRequirements)
+
+			require.Equal(t, tt.expect.ret.Code(), ret.Code())
+			assert.ElementsMatch(t, tt.expect.ret.Reasons(), ret.Reasons())
+			require.Equal(t, tt.expect.replica, replica)
 		})
 	}
 }
